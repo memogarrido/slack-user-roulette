@@ -57,7 +57,7 @@ export const setupWorkflowStep = functions
             );
             await slackService.saveUserRouletteWorkflowStep(
                 payload.workflow_step.workflow_step_edit_id,
-            groupSize < users.legth ? groupSize : users.legth
+            groupSize < users.length ? groupSize : users.length
             );
             response.status(StatusCodes.OK).send();
             return;

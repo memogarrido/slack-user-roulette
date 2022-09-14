@@ -1,6 +1,7 @@
 import {KnownBlock, WebClient} from "@slack/web-api";
 import {SetupFields} from "../../models/SetupFields.enum";
 import {SetupOutputs} from "../../models/StepOutputs.enum";
+import * as functions from "firebase-functions";
 /**
  * Service to interact with Slack Web API https://api.slack.com/apis
  */
@@ -56,7 +57,7 @@ export class SlackService {
   /**
    * Save Spin roulette Step into workflow
    * @param {string } workflowStepEditId Obtained from the workflow_step_edit  event
-   * {@link workflow_step_edit https://api.slack.com/reference/workflows/workflow_step_edit}
+   * {@link workflowStepEditId https://api.slack.com/reference/workflows/workflow_step_edit}
    * @param {number } resultSize number of resulting users form spinning the roulette
    */
   public async saveUserRouletteWorkflowStep(
@@ -72,11 +73,13 @@ export class SlackService {
         name: `${SetupOutputs.RouletteResult}${i}`,
       });
     }
-    await this.client.workflows.updateStep({
+    const workflowStep = {
       outputs: outputs,
       workflow_step_edit_id: workflowStepEditId,
       step_name: "Spint user roulette",
-    });
+    };
+    functions.logger.debug("STEP", workflowStep);
+    await this.client.workflows.updateStep(workflowStep);
   }
 
   /**
