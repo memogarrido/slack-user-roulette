@@ -1,3 +1,4 @@
 export enum SetupOutputs {
-  RouletteResult = "rouletteResult",
+  RouletteResultUser = "rouletteResultUser",
+  RouletteResultConversation = "rouletteResultConversation",
 }

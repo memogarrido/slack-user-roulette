@@ -9,7 +9,7 @@ export const spinRoulette = functions
       const requestTimeStamp = request.header("X-Slack-Request-Timestamp");
       const requestSignature = request.header("X-Slack-Signature");
       const rawBody = request.rawBody.toString();
-      functions.logger.debug("Rquest temp log", request.body, request.headers);
+      functions.logger.debug("REQUEST BODY", request.body, "REQUEST HEADERS", request.headers);
       if ( !( process.env.SLACK_SIGNING_SECRET && process.env.SLACK_TOKEN && requestTimeStamp && requestSignature ) ) {
         response.sendStatus(StatusCodes.BAD_REQUEST);
         return;
@@ -30,13 +30,21 @@ export const spinRoulette = functions
         case "event_callback":
           response.status(StatusCodes.OK).send(ReasonPhrases.OK);
           functions.logger.info("event_callback");
+          functions.logger.debug("OUTPUTS", event.workflow_step.outputs);
           if (event.type === "workflow_step_execute") {
             functions.logger.info("workflow_step_execute");
             try {
-              const users = await rouletteService.spinRoulette(
+              const groups = await rouletteService.spinRoulette(
                   event.workflow_step.workflow_id,
                   event.workflow_step.step_id
               );
+              const users:Array<Array<string>> = [];
+              for (const group of groups) {
+                const usersInGroup = group.map((u)=>u.userId);
+                users.push(usersInGroup);
+              }
+              functions.logger.debug("users", users);
+              functions.logger.debug("groups", groups);
               await slackService.eventSuccessReply(
                   event.workflow_step.workflow_step_execute_id,
                   users

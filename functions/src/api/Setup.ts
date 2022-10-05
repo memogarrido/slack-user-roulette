@@ -5,8 +5,7 @@ import {SetupFields} from "../models/SetupFields.enum";
 import {SlackService} from "../services/slack";
 import {RouletteService} from "../services/roulette";
 
-export const setupWorkflowStep = functions
-    .runWith({secrets: ["SLACK_SIGNING_SECRET", "SLACK_TOKEN"]})
+export const setupWorkflowStep = functions .runWith({secrets: ["SLACK_SIGNING_SECRET", "SLACK_TOKEN"]})
     .https.onRequest(async (request, response) => {
       const requestTimeStamp = request.header("X-Slack-Request-Timestamp");
       const requestSignature = request.header("X-Slack-Signature");
@@ -31,33 +30,59 @@ export const setupWorkflowStep = functions
         case "workflow_step_edit":
           functions.logger.info("workflow_step_edit");
           try {
-            await slackService.openUserRouletteConfigurationModal(
-                payload.trigger_id
-            );
+            await slackService.openUserRouletteConfigurationModal( payload.trigger_id );
             response.status(StatusCodes.OK).send(ReasonPhrases.OK);
           } catch (e) {
             functions.logger.error(e);
             response.sendStatus(StatusCodes.INTERNAL_SERVER_ERROR);
           }
           return;
+        case "block_actions":
+          functions.logger.info("block_actions");
+          try {
+            const numberOfInputGroups = payload.view.state.values[SetupFields.NumberOfInputGroups]["title"] .value;
+            await slackService.updateConfigModalWithUserInputs( payload.trigger_id, payload.view, numberOfInputGroups );
+            response.status(StatusCodes.OK).send();
+            return;
+          } catch (e) {
+            functions.logger.error(e);
+            response.sendStatus(StatusCodes.INTERNAL_SERVER_ERROR);
+            return;
+          }
         case "view_submission":
           functions.logger.info("view_submission");
           try {
-            const groupSize =
-            payload.view.state.values[SetupFields.SubgroupSize]["title"].value;
-            const users =
-            payload.view.state.values[SetupFields.Users][
-                "multi_users_select-action"
-            ].selected_users;
+            let resultSize = parseInt(payload.view.state.values[SetupFields.SubgroupSize]["title"].value);
+            let numberOfResults = parseInt( payload.view.state.values[SetupFields.NumberOfResults]["title"].value);
+            const numberOfInputGroups = parseInt(
+                payload.view.state.values[SetupFields.NumberOfInputGroups]["title"].value
+            );
+            const usersSets: Array<Array<string>> = [];
+            let totalUsers = 0;
+            for (let i = 0; i < numberOfInputGroups; i++) {
+              const users =
+               payload.view.state.values[`${SetupFields.Users}${i+1}`]["multi_users_select-action"].selected_users;
+              usersSets.push(users);
+              totalUsers += users.length;
+            }
+            if (resultSize > totalUsers) {
+              resultSize = totalUsers;
+            }
+            if (resultSize * numberOfResults > totalUsers) {
+              numberOfResults = Math.ceil(totalUsers / resultSize);
+            }
             await rouletteService.setupWheel(
                 payload.workflow_step.workflow_id,
                 payload.workflow_step.step_id,
-                users,
-                groupSize
+                usersSets,
+                resultSize,
+                numberOfResults
             );
+
             await slackService.saveUserRouletteWorkflowStep(
                 payload.workflow_step.workflow_step_edit_id,
-            groupSize < users.length ? groupSize : users.length
+                resultSize,
+                numberOfResults
             );
             response.status(StatusCodes.OK).send();
             return;

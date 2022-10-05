@@ -4,7 +4,12 @@ This app is intended to be used as [Workflow Step](https://api.slack.com/workflo
 
 ## About 
 
-When creating a Slack workflow with this step, it will require users to provide a set of users to choose from, and the amount of users to return (e.g. providing a list of 10 users and choosing to return always 1 random user).
+When creating a Slack workflow with this step, it will require users to provide one ore more sets of users to choose from, the amount of results to return and the size of the result (users )to return
+
+### Examples:
+- Providing a list of 10 users and choosing to return always 1 set of 1 random user.
+- Providing a two lists of 10 users each and choosing to return always 4 sets of 5 random user.
+    - In this scenario the roullete will have preference to combine users from different sets
 
 ### Example workflow
 
@@ -39,6 +44,6 @@ To host it your self you will need to:
 1. Install [Firebase CLI](https://firebase.google.com/docs/cli)
 1. Init firebase project `firebase init` to create `.firebaserc` **do not replace files**
 1. Setup Slack secrets: [Signing Secret](https://api.slack.com/authentication/verifying-requests-from-slack#about) and workspace [Oauth Token](https://api.slack.com/authentication/oauth-v2)
-    - `firebase functions:secrets set SLACK_SIGNING_SECRET`
-    - `firebase functions:secrets set SLACK_TOKEN`
+    - `firebase functions:secrets:set SLACK_SIGNING_SECRET`
+    - `firebase functions:secrets:set SLACK_TOKEN`
 1. Deploy: `npm run deploy`

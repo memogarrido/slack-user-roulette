@@ -1,12 +1,30 @@
 import * as admin from "firebase-admin";
 import {database} from "firebase-admin";
-import {User, Wheel} from "../../models/Wheel.model";
+import {Group, User, Wheel} from "../../models/Wheel.model";
 import * as functions from "firebase-functions";
+import {ICompare, PriorityQueue} from "@datastructures-js/priority-queue";
 /**
  * Roulette Service setups the Roulette options (users) and spins the wheen (return subset of users)
  */
 export class RouletteService {
   private db: database.Database;
+
+  /**
+   * Comparator for the heap, to be able to dequeue items based on the least used and group size
+   * @param {Group } a First group to compare
+   * @param  {Group } b Second group to compare against
+   * @return {ICompare<Group> } the group with more priority to be used
+   */
+  private groupsComparator: ICompare<Group> = (a: Group, b: Group) => {
+    if (a.usersWithMeetings < b.usersWithMeetings) {
+      return -1;
+    }
+    if (a.usersWithMeetings > b.usersWithMeetings) {
+      return 1;
+    }
+    return a.availableUsersCount > b.availableUsersCount ? -1 : 1;
+  };
+
   /**
    * Create new Roulette Service
    */
@@ -32,55 +50,64 @@ export class RouletteService {
    */
   public async spinRoulette(workspaceId: string, stepId: string) {
     const wheel = await this.getWheel(workspaceId, stepId);
-    const userResult:Array<string> =[];
-    const users =this.getUsersAvailable(wheel.resultSize, Object.values(wheel.users));
-    functions.logger.debug("users", users);
-    const randomizedUserRoulette = this.randomizeRoulette(users);
-    functions.logger.debug("random", randomizedUserRoulette);
-    for (let i=0; i<wheel.resultSize; i++) {
-      userResult.push(randomizedUserRoulette[i].userId);
-      await this.updateSpinCount(workspaceId, stepId, randomizedUserRoulette[i]);
+    const groups = this.getGroups(wheel);
+    for (const users of groups) {
+      for (const user of users) {
+        await this.updateSpinCount(workspaceId, stepId, user);
+      }
     }
-    return userResult;
+    return groups;
   }
 
   /**
-   * Get the users to be available on the roulette (excluding the ones that have been selected the most)
-   * @param {number} minimum Minimum amount of users tp exist on the roulette
-   * @param {Array<User>} users All users universe from the wheel
-   * @return {Array<User>} Users avialable to suffle
+   * Generate N numbwe of groups  of M size using all users available on the Wheel setup
+   * @param {Wheel} wheel
+   * @param {number} groupSize size of the result groups
+   * @param {number} numberOfGroups number of result groups
+   * @return {Array<Array<User>>} result grups of users
    */
-  private getUsersAvailable( minimum:number, users:Array<User>) {
-    const minCountUser = users.reduce(function(prev, curr) {
-      return prev.count < curr.count ? prev : curr;
-    });
-    let participationCountThreshold = minCountUser.count;
-    let usersWithMinimumCount:Array<User>=[];
-    while (usersWithMinimumCount.length<minimum) {
-      const filteredUsers=users.filter((user)=>user.count===participationCountThreshold);
-      usersWithMinimumCount = usersWithMinimumCount.concat(filteredUsers);
-      participationCountThreshold++;
+  private getGroups(wheel: Wheel): Array<Array<User>> {
+    const groupsQueue = PriorityQueue.fromArray<Group>( Object.values(wheel.groups), this.groupsComparator );
+    const subgroups = [];
+    while ( subgroups.length < wheel.numberOfResults && groupsQueue.size() > 0 ) {
+      const subgroup = this.createGroup(groupsQueue, wheel.resultSize);
+      subgroups.push(subgroup);
     }
-    return usersWithMinimumCount;
+    return subgroups;
   }
 
   /**
-   * Ramdpmize roulette options
-   * https://stackoverflow.com/a/2450976/1537389
-   * @param {Array<User>} users Users available on roulette
-   * @return {Array<User>} Users on random order
+   * Get a random user from the provided group
+   * @param {Group} group Group containing all users
+   * @return {User} a user
    */
-  private randomizeRoulette(users:Array<User>) {
-    let currentIndex = users.length;
-    const randomizedUsers = [...users];
-    let randomIndex;
-    while (currentIndex != 0) {
-      randomIndex = Math.floor(Math.random() * currentIndex);
-      currentIndex--;
-      [randomizedUsers[currentIndex], randomizedUsers[randomIndex]] = [
-        randomizedUsers[randomIndex], randomizedUsers[currentIndex]];
+  private getRandomUser(group: Group): User {
+    const userKeys = Object.keys(group.users);
+    const userIndex = Math.floor(Math.random() * userKeys.length);
+    return group.users[userKeys[userIndex]];
+  }
+
+  /**
+   * Create a group of users from different groups
+   * @param { PriorityQueue<Group>} groupQueue Groups priority queue (heap) order by less used groups
+   * @param {number} size Size of the group
+   * @return {Array<User>} Group of users
+   */
+  private createGroup( groupQueue: PriorityQueue<Group>, size: number ): Array<User> {
+    const subgroup: Array<User> = [];
+    let currGroup = null;
+    while ( subgroup.length < size && (currGroup = groupQueue.dequeue()) != null ) {
+      const randomUser = this.getRandomUser(currGroup);
+      const user = {...randomUser};
+      currGroup.availableUsersCount--;
+      currGroup.usersWithMeetings++;
+      delete currGroup.users[user.userId];
+      subgroup.push(user);
+      if (currGroup.availableUsersCount > 0) {
+        groupQueue.enqueue(currGroup);
+      }
     }
-    return randomizedUsers;
+    return subgroup;
   }
 
   /**
@@ -89,31 +116,55 @@ export class RouletteService {
    * @param {string} stepId Step Id Obtained from the workflow_step_execute event_callback
    * @param {User} user User to update count
    */
-  public async updateSpinCount( workspaceId: string, stepId: string, user:User ) {
-    await this.db.ref(workspaceId).child(stepId).child("users").child(user.userId).update({count: user.count+1});
+  public async updateSpinCount( workspaceId: string, stepId: string, user: User ) {
+    await this.db
+        .ref(workspaceId)
+        .child(stepId)
+        .child("groups")
+        .child(user.groupId)
+        .child("users")
+        .child(user.userId)
+        .update({count: user.count + 1});
   }
 
   /**
    * Creates workflow roulette wheel (saves users list into database)
    * @param {string} workspaceId Workspace Id Obtained from the workflow_step_execute event_callback
    * @param {string} stepId Step Id Obtained from the workflow_step_execute event_callback
-   * @param {Array<string>} users List of user identifiers to be included in the roulette
+   * @param {Array<Array<string>>} users List of user identifiers to be included in the roulette
    * @param {number} subsetSize size of result subset
+   * @param {number} numberOfResults size of results to generate
    */
   public async setupWheel(
       workspaceId: string,
       stepId: string,
-      users: Array<string>,
-      subsetSize: number
+      users: Array<Array<string>>,
+      subsetSize: number,
+      numberOfResults: number
   ) {
     const wheel: Wheel = {
       resultSize: subsetSize,
       stepId: stepId,
       workflowId: workspaceId,
-      users: {},
+      groupCount: users.length,
+      numberOfResults,
+      groups: {},
     };
-    for (const user of users) {
-      wheel.users[user] = {count: 0, userId: user};
+    for (const usersArr of users) {
+      const groupKey = this.db.ref(workspaceId).child(stepId).push().key;
+      if (groupKey != null) {
+        const group: Group = {
+          availableUsersCount: usersArr.length,
+          usersWithMeetings: 0,
+          id: groupKey,
+          users: {},
+        };
+        wheel.groups[groupKey] = group;
+        for (const userId of usersArr) {
+          const userObj: User = {count: 0, userId: userId, groupId: groupKey};
+          wheel.groups[groupKey].users[userId] = userObj;
+        }
+      }
     }
     functions.logger.debug("SETUP", wheel);
     await this.db.ref(workspaceId).child(stepId).set(wheel);
